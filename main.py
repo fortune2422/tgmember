@@ -1,6 +1,6 @@
 import os
-import asyncio
-from flask import Flask, request, render_template_string, redirect, url_for
+import csv
+from flask import Flask, request, render_template_string, redirect, url_for, send_file
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
@@ -12,10 +12,9 @@ SESSION_NAME = "tg_session"
 app = Flask(__name__)
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-# 全局变量保存当前手机号
-phone_number = None
+phone_number = None  # 保存当前手机号
 
-# 登录页面模板
+# 登录页面
 login_page = """
 <h2>Telegram 登录</h2>
 <form method="POST">
@@ -25,44 +24,86 @@ login_page = """
 </form>
 """
 
-# 验证码页面模板
+# 验证码页面
 code_page = """
 <h2>输入验证码</h2>
-<form method="POST">
+<form method="POST" action="/verify">
     <label>验证码：</label><br>
     <input type="text" name="code" required><br><br>
     <input type="submit" value="登录">
 </form>
 """
 
-@app.route("/", methods=["GET"])
+# 导出页面
+export_page = """
+<h2>导出群成员</h2>
+<form method="POST" action="/export">
+    <label>群名或群 ID：</label><br>
+    <input type="text" name="group" required><br><br>
+    <input type="submit" value="导出 CSV">
+</form>
+"""
+
+@app.route("/")
 def home():
     return redirect(url_for("login"))
 
 @app.route("/login", methods=["GET", "POST"])
-async def login():
+def login():
     global phone_number
     if request.method == "POST":
         phone_number = request.form["phone"]
-        await client.connect()
-        if not await client.is_user_authorized():
-            await client.send_code_request(phone_number)
+        client.connect()
+        if not client.is_user_authorized():
+            client.send_code_request(phone_number)
         return render_template_string(code_page)
     return render_template_string(login_page)
 
 @app.route("/verify", methods=["POST"])
-async def verify():
+def verify():
+    global phone_number
     code = request.form["code"]
-    await client.connect()
+    client.connect()
     try:
-        await client.sign_in(phone_number, code)
+        client.sign_in(phone_number, code)
     except SessionPasswordNeededError:
         return "需要两步验证密码（暂未实现）"
-    return "✅ 登录成功！你现在可以获取群成员信息了。"
+    return render_template_string(export_page)
+
+@app.route("/export", methods=["POST"])
+def export_members():
+    group_name = request.form["group"]
+    client.connect()
+    dialogs = client.get_dialogs()
+
+    # 查找群
+    target_group = None
+    for dialog in dialogs:
+        if dialog.is_group and (group_name.lower() in dialog.name.lower() or str(dialog.id) == group_name):
+            target_group = dialog
+            break
+
+    if not target_group:
+        return "❌ 未找到该群"
+
+    members = client.get_participants(target_group)
+
+    # 保存到 CSV
+    file_path = "members.csv"
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["User ID", "Username", "First Name", "Last Name"])
+        for member in members:
+            writer.writerow([
+                member.id,
+                member.username or "",
+                member.first_name or "",
+                member.last_name or ""
+            ])
+
+    return send_file(file_path, as_attachment=True)
 
 if __name__ == "__main__":
-    # Render 需要监听 0.0.0.0:10000 端口
     port = int(os.environ.get("PORT", 10000))
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(client.connect())
+    client.connect()
     app.run(host="0.0.0.0", port=port)
