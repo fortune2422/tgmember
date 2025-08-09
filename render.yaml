@@ -2,14 +2,6 @@ services:
   - type: web
     name: telegram-exporter
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    envVars:
-      - key: API_ID
-        value: "25383117"
-      - key: API_HASH
-        value: "c12894dabde9aa99cbe181e7ee8ec5b8"
-      - key: PHONE
-        value: "+639999005166"   # 你 Telethon 登录的手机号
-      - key: TARGET_GROUP
-        value: "https://t.me/oficial9fbetbr"
