@@ -1,5 +1,2 @@
 telethon
-openpyxl
-fastapi
-uvicorn
-python-multipart
+flask
