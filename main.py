@@ -1,114 +1,75 @@
-# main.py
 import os
-import asyncio
-from datetime import datetime
-from fastapi import FastAPI, Response
-from telethon import TelegramClient
 import csv
+from telethon import TelegramClient
+from flask import Flask, send_file
 
-# config from env
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-PHONE = os.getenv("PHONE_NUMBER", "")            # e.g. +639999005166
-TARGET_GROUP = os.getenv("TARGET_GROUP", "")     # e.g. https://t.me/oficial9fbetbr
-SESSION_DIR = os.getenv("SESSION_DIR", "/data")
-SESSION_NAME = os.path.join(SESSION_DIR, "telethon_session")
-EXPORT_DIR = os.getenv("EXPORT_DIR", "/data")
-EXPORT_PREFIX = os.getenv("EXPORT_PREFIX", "members")
+# 读取环境变量
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+PHONE = os.environ.get("PHONE")  # 你的手机号，用于 Telethon 登录
+TARGET_GROUP = os.environ.get("TARGET_GROUP")
 
-if not os.path.isdir(SESSION_DIR):
-    os.makedirs(SESSION_DIR, exist_ok=True)
-if not os.path.isdir(EXPORT_DIR):
-    os.makedirs(EXPORT_DIR, exist_ok=True)
+# Telethon 客户端
+client = TelegramClient("session_name", API_ID, API_HASH)
 
-app = FastAPI(title="Telegram Exporter")
+app = Flask(__name__)
 
-def make_client():
-    return TelegramClient(SESSION_NAME, API_ID, API_HASH)
+async def export_members():
+    """导出群成员"""
+    await client.start(PHONE)
 
-async def do_export():
-    client = make_client()
-    await client.start(phone=PHONE)  # if session present, this won't ask code
     entity = await client.get_entity(TARGET_GROUP)
     members = await client.get_participants(entity, aggressive=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    filename = f"{EXPORT_PREFIX}_{timestamp}.csv"
-    path = os.path.join(EXPORT_DIR, filename)
+    csv_file = "members.csv"
+    txt_file = "members.txt"
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["username", "user_id", "phone"])
-        for m in members:
-            username = m.username or ""
-            uid = m.id
-            phone = getattr(m, "phone", "") or ""
-            writer.writerow([username, uid, phone])
+    with open(csv_file, "w", newline="", encoding="utf-8") as f_csv, \
+         open(txt_file, "w", encoding="utf-8") as f_txt:
+        writer = csv.writer(f_csv)
+        writer.writerow(["Username", "User ID", "Phone"])
 
-    await client.disconnect()
-    return path, len(members)
+        for member in members:
+            username = member.username or ""
+            user_id = member.id
+            phone = member.phone or ""
 
-@app.on_event("startup")
-async def startup_event():
-    # automatic export on startup if session exists
-    session_exists = os.path.exists(SESSION_NAME + ".session") or os.path.exists(SESSION_NAME + ".session-journal")
-    if session_exists:
-        try:
-            path, count = await do_export()
-            print(f"[startup] Exported {count} members -> {path}")
-            # write latest pointer
-            with open(os.path.join(EXPORT_DIR, "latest.txt"), "w") as t:
-                t.write(path)
-        except Exception as e:
-            print("[startup] export failed:", e)
-    else:
-        print("[startup] No session file found. Please run interactive init locally or via Render Shell to login.")
+            writer.writerow([username, user_id, phone])
+            f_txt.write(f"{username} | {user_id} | {phone}\n")
 
-@app.get("/")
-def index():
-    return {"status": "ok", "note": "Use /export to export, /download to fetch latest file."}
+    # 保存额外号码
+    with open("extra_number.txt", "w", encoding="utf-8") as f_extra:
+        f_extra.write("+639999005166\n")
 
-@app.post("/export")
-async def export_endpoint():
-    try:
-        path, count = await do_export()
-        with open(os.path.join(EXPORT_DIR, "latest.txt"), "w") as t:
-            t.write(path)
-        return {"status": "ok", "exported": count, "path": path}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
+@app.route("/")
+def home():
+    return """
+    <h1>Telegram 群成员导出工具</h1>
+    <a href='/run'>立即抓取群成员</a>
+    """
 
-@app.get("/download")
-def download_latest():
-    latest_file = os.path.join(EXPORT_DIR, "latest.txt")
-    if not os.path.exists(latest_file):
-        return Response("No export yet", status_code=404)
-    with open(latest_file, "r") as f:
-        path = f.read().strip()
-    if not os.path.exists(path):
-        return Response("File missing", status_code=404)
-    with open(path, "rb") as f:
-        data = f.read()
-    filename = os.path.basename(path)
-    return Response(content=data, media_type="text/csv", headers={
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    })
+@app.route("/run")
+def run_export():
+    with client:
+        client.loop.run_until_complete(export_members())
+    return """
+    <h3>抓取完成</h3>
+    <p><a href='/download/csv'>下载 CSV 文件</a></p>
+    <p><a href='/download/txt'>下载 TXT 文件</a></p>
+    <p><a href='/download/extra'>下载额外号码</a></p>
+    """
+
+@app.route("/download/csv")
+def download_csv():
+    return send_file("members.csv", as_attachment=True)
+
+@app.route("/download/txt")
+def download_txt():
+    return send_file("members.txt", as_attachment=True)
+
+@app.route("/download/extra")
+def download_extra():
+    return send_file("extra_number.txt", as_attachment=True)
 
 if __name__ == "__main__":
-    import uvicorn, argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--init", action="store_true", help="Run interactive login locally to create session")
-    args = parser.parse_args()
-
-    if args.init:
-        # Interactive one-off to create session locally (use this on your laptop)
-        async def init_session():
-            client = make_client()
-            print("Starting interactive login. You will receive a code in your Telegram app.")
-            await client.start(phone=PHONE)
-            print("✅ session created at", SESSION_NAME + ".session")
-            await client.disconnect()
-        asyncio.run(init_session())
-    else:
-        port = int(os.environ.get("PORT", 10000))
-        uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
