@@ -3,14 +3,18 @@ services:
     name: telegram-exporter
     env: python
     plan: free
+    autoDeploy: true
     buildCommand: pip install -r requirements.txt
-    startCommand: python export_members.py
+    startCommand: python main.py
     envVars:
-      - key: TG_API_ID
+      - key: API_ID
         value: "25383117"
-      - key: TG_API_HASH
+      - key: API_HASH
+        # 把你的 API_HASH 填在 Render 仪表盘环境变量里（不要提交到 git）
         value: "c12894dabde9aa99cbe181e7ee8ec5b8"
-      - key: TG_PHONE
-        value: "+639157681213"  # 你的手机号
-      - key: TG_GROUP
-        value: "https://t.me/oficial9fbetbr"  # 群链接
+      - key: PHONE_NUMBER
+        value: "+639999005166"
+      - key: TARGET_GROUP
+        value: "https://t.me/oficial9fbetbr"
+    healthCheckPath: /download
+    region: singapore
