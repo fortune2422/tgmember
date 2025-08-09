@@ -1,75 +1,79 @@
+from flask import Flask, request, jsonify
+from telethon import TelegramClient
 import os
 import csv
-from telethon import TelegramClient
-from flask import Flask, send_file
 
-# 读取环境变量
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-PHONE = os.environ.get("PHONE")  # 你的手机号，用于 Telethon 登录
-TARGET_GROUP = os.environ.get("TARGET_GROUP")
-
-# Telethon 客户端
-client = TelegramClient("session_name", API_ID, API_HASH)
+# 固定账号信息
+api_id = 25383117
+api_hash = "c12894dabde9aa99cbe181e7ee8ec5b8"
+phone = "+639999005166"
+group_link = "https://t.me/oficial9fbetbr"
 
 app = Flask(__name__)
-
-async def export_members():
-    """导出群成员"""
-    await client.start(PHONE)
-
-    entity = await client.get_entity(TARGET_GROUP)
-    members = await client.get_participants(entity, aggressive=True)
-
-    csv_file = "members.csv"
-    txt_file = "members.txt"
-
-    with open(csv_file, "w", newline="", encoding="utf-8") as f_csv, \
-         open(txt_file, "w", encoding="utf-8") as f_txt:
-        writer = csv.writer(f_csv)
-        writer.writerow(["Username", "User ID", "Phone"])
-
-        for member in members:
-            username = member.username or ""
-            user_id = member.id
-            phone = member.phone or ""
-
-            writer.writerow([username, user_id, phone])
-            f_txt.write(f"{username} | {user_id} | {phone}\n")
-
-    # 保存额外号码
-    with open("extra_number.txt", "w", encoding="utf-8") as f_extra:
-        f_extra.write("+639999005166\n")
+client = TelegramClient("session_name", api_id, api_hash)
 
 @app.route("/")
 def home():
-    return """
-    <h1>Telegram 群成员导出工具</h1>
-    <a href='/run'>立即抓取群成员</a>
-    """
+    return "✅ Telegram Exporter Running"
 
-@app.route("/run")
-def run_export():
-    with client:
-        client.loop.run_until_complete(export_members())
-    return """
-    <h3>抓取完成</h3>
-    <p><a href='/download/csv'>下载 CSV 文件</a></p>
-    <p><a href='/download/txt'>下载 TXT 文件</a></p>
-    <p><a href='/download/extra'>下载额外号码</a></p>
-    """
+@app.route("/login")
+async def login():
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.send_code_request(phone)
+        return "验证码已发送到 Telegram"
+    else:
+        return "已登录，无需再次获取验证码"
 
-@app.route("/download/csv")
-def download_csv():
-    return send_file("members.csv", as_attachment=True)
+@app.route("/verify")
+async def verify():
+    code = request.args.get("code")
+    if not code:
+        return "请在 URL 中加上验证码参数，例如 /verify?code=12345"
+    await client.connect()
+    try:
+        await client.sign_in(phone, code)
+        return "✅ 登录成功！现在可以访问 /export 导出成员"
+    except Exception as e:
+        return f"❌ 登录失败: {e}"
 
-@app.route("/download/txt")
-def download_txt():
-    return send_file("members.txt", as_attachment=True)
+@app.route("/export")
+async def export():
+    await client.connect()
+    if not await client.is_user_authorized():
+        return "❌ 请先 /login 并 /verify 完成登录"
 
-@app.route("/download/extra")
-def download_extra():
-    return send_file("extra_number.txt", as_attachment=True)
+    try:
+        # 获取群对象
+        group = await client.get_entity(group_link)
+        members = await client.get_participants(group)
+
+        # 保存 CSV
+        file_path = "/tmp/members.csv"
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["用户名", "ID", "电话"])
+            for m in members:
+                username = m.username or ""
+                user_id = m.id
+                phone_number = getattr(m, "phone", "")
+                writer.writerow([username, user_id, phone_number])
+
+        return jsonify({
+            "status": "✅ 成功导出",
+            "count": len(members),
+            "download": "/download"
+        })
+    except Exception as e:
+        return f"❌ 导出失败: {e}"
+
+@app.route("/download")
+def download():
+    file_path = "/tmp/members.csv"
+    if os.path.exists(file_path):
+        return app.send_static_file(file_path)
+    return "没有找到导出文件"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    import asyncio
+    asyncio.run(app.run(host="0.0.0.0", port=10000))
