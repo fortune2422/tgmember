@@ -1,2 +1,2 @@
-telethon
-flask
+Flask
+Telethon
