@@ -25,6 +25,9 @@ def home():
 
 @app.route("/login")
 def login():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     async def do_login():
         await client.connect()
         if not await client.is_user_authorized():
@@ -32,13 +35,16 @@ def login():
             return "验证码已发送到 Telegram"
         return "已登录，无需再次获取验证码"
 
-    return asyncio.run(do_login())
+    return loop.run_until_complete(do_login())
 
 @app.route("/verify")
 def verify():
     code = request.args.get("code")
     if not code:
         return "请在 URL 中加上验证码参数，例如 /verify?code=12345"
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     async def do_verify():
         await client.connect()
@@ -48,10 +54,13 @@ def verify():
         except Exception as e:
             return f"❌ 登录失败: {e}"
 
-    return asyncio.run(do_verify())
+    return loop.run_until_complete(do_verify())
 
 @app.route("/export")
 def export():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     async def do_export():
         await client.connect()
         if not await client.is_user_authorized():
@@ -76,7 +85,7 @@ def export():
             "download": "/download"
         })
 
-    return asyncio.run(do_export())
+    return loop.run_until_complete(do_export())
 
 @app.route("/download")
 def download():
