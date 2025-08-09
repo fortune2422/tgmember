@@ -1,107 +1,54 @@
 import os
-from flask import Flask, request, render_template_string, send_file
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
 import csv
-import asyncio
+from flask import Flask, send_file, request
+from telethon import TelegramClient
 
-API_ID = 25383117
-API_HASH = "c12894dabde9aa99cbe181e7ee8ec5b8"
+# 从环境变量读取配置
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# 存储会话
-SESSION_FILE = "anon"
-client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
+# 创建 Telethon 客户端（使用 Bot Token，无需交互）
+client = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 app = Flask(__name__)
 
-# 简单的 HTML 模板
-login_page = """
-<h2>Telegram 登录</h2>
-<form method="post" action="/send_code">
-  手机号（带国家码，如 +85512345678）:<br>
-  <input type="text" name="phone"><br><br>
-  <button type="submit">发送验证码</button>
-</form>
-"""
-
-verify_page = """
-<h2>输入验证码</h2>
-<form method="post" action="/verify">
-  验证码（Telegram 发来的 5 位数字）:<br>
-  <input type="text" name="code"><br><br>
-  如果开启了两步验证，请输入密码（否则留空）:<br>
-  <input type="password" name="password"><br><br>
-  <button type="submit">验证登录</button>
-</form>
-"""
-
-group_page = """
-<h2>获取群成员</h2>
-<form method="post" action="/export">
-  群链接或群 ID:<br>
-  <input type="text" name="group"><br><br>
-  <button type="submit">导出成员</button>
-</form>
-"""
-
-@app.route("/", methods=["GET"])
+@app.route('/')
 def index():
-    return login_page
+    return "✅ Telegram 群成员导出机器人已运行"
 
-@app.route("/send_code", methods=["POST"])
-def send_code():
-    phone = request.form["phone"]
+@app.route('/export', methods=['GET'])
+async def export_members():
+    chat_id = request.args.get('chat_id')
+    if not chat_id:
+        return "❌ 请在 URL 中加上 chat_id 参数", 400
 
-    async def _send():
-        await client.connect()
-        await client.send_code_request(phone)
-        client.storage.set("phone", phone)
-    asyncio.run(_send())
+    try:
+        members = []
+        async for member in client.iter_participants(chat_id):
+            members.append([member.id, member.username or "", member.first_name or "", member.last_name or ""])
 
-    return verify_page
-
-@app.route("/verify", methods=["POST"])
-def verify():
-    code = request.form["code"]
-    password = request.form.get("password", "")
-    phone = client.storage.get("phone")
-
-    async def _verify():
-        await client.connect()
-        try:
-            await client.sign_in(phone=phone, code=code)
-        except SessionPasswordNeededError:
-            if not password:
-                return False, "需要两步验证密码，但你没输入"
-            await client.sign_in(password=password)
-        return True, None
-
-    success, err = asyncio.run(_verify())
-    if not success:
-        return f"<p>登录失败：{err}</p>" + verify_page
-
-    return "<p>✅ 登录成功！</p>" + group_page
-
-@app.route("/export", methods=["POST"])
-def export():
-    group_input = request.form["group"]
-
-    async def _export():
-        await client.connect()
-        entity = await client.get_entity(group_input)
-        members = await client.get_participants(entity)
-
-        file_path = "members.csv"
+        # 保存为 CSV
+        file_path = "/tmp/members.csv"
         with open(file_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["id", "username", "first_name", "last_name"])
-            for m in members:
-                writer.writerow([m.id, m.username, m.first_name, m.last_name])
-        return file_path
+            writer.writerow(["User ID", "Username", "First Name", "Last Name"])
+            writer.writerows(members)
 
-    file_path = asyncio.run(_export())
-    return send_file(file_path, as_attachment=True)
+        return send_file(file_path, as_attachment=True)
 
-if __name__ == "__main__":
-    client.start()
-    app.run(host="0.0.0.0", port=5000)
+    except Exception as e:
+        return f"❌ 错误: {str(e)}", 500
+
+if __name__ == '__main__':
+    import threading
+
+    # 在后台线程运行 Telegram bot
+    def run_bot():
+        client.run_until_disconnected()
+
+    threading.Thread(target=run_bot).start()
+
+    # 启动 Flask
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
