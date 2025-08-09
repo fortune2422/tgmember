@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: jili-signal-bot
+    env: docker
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: your_bot_token
+      - key: WEBHOOK_URL
+        value: https://yourbot.onrender.com
+    dockerfilePath: ./Dockerfile
+    region: singapore
+
+  - type: worker
+    name: telegram-exporter
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python export_members.py
+    envVars:
+      - key: TG_API_ID
+        value: "25383117"
+      - key: TG_API_HASH
+        value: "c12894dabde9aa99cbe181e7ee8ec5b8"
+      - key: TG_PHONE
+        value: "+639157681213"  # 你的手机号
+      - key: TG_GROUP
+        value: "https://t.me/xxx"  # 群链接
