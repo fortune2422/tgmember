@@ -1,5 +1,7 @@
 import os
 import csv
+import asyncio
+import traceback
 from flask import Flask, request, render_template_string, redirect, url_for, send_file
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
@@ -53,9 +55,9 @@ def login():
     global phone_number
     if request.method == "POST":
         phone_number = request.form["phone"]
-        client.connect()
-        if not client.is_user_authorized():
-            client.send_code_request(phone_number)
+        asyncio.run(client.connect())
+        if not asyncio.run(client.is_user_authorized()):
+            asyncio.run(client.send_code_request(phone_number))
         return render_template_string(code_page)
     return render_template_string(login_page)
 
@@ -63,62 +65,65 @@ def login():
 def verify():
     global phone_number
     code = request.form["code"]
-    client.connect()
+    asyncio.run(client.connect())
     try:
-        client.sign_in(phone_number, code)
+        asyncio.run(client.sign_in(phone_number, code))
     except SessionPasswordNeededError:
         return "需要两步验证密码（暂未实现）"
     return render_template_string(export_page)
 
 @app.route("/export", methods=["POST"])
 def export_members():
+    group_name = request.form.get("group", "").strip()
+    if not group_name:
+        return "❌ 缺少 group 参数", 400
+
     try:
-        group_name = request.form.get("group", "").strip()
-        if not group_name:
-            return "❌ 缺少 group 参数", 400
-
-        # 确保 Telethon 已连接
-        if not client.is_connected():
-            client.connect()
-
-        dialogs = client.get_dialogs()
-
-        # 查找群
-        target_group = None
-        for dialog in dialogs:
-            if dialog.is_group and (group_name.lower() in dialog.name.lower() or str(dialog.id) == group_name):
-                target_group = dialog
-                break
-
-        if not target_group:
-            return f"❌ 未找到该群: {group_name}", 404
-
-        # 获取成员（Telethon get_participants 是异步）
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        members = loop.run_until_complete(client.get_participants(target_group))
-
-        # 保存到 CSV
-        file_path = "members.csv"
-        with open(file_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["User ID", "Username", "First Name", "Last Name"])
-            for member in members:
-                writer.writerow([
-                    member.id,
-                    member.username or "",
-                    member.first_name or "",
-                    member.last_name or ""
-                ])
-
+        file_path = asyncio.run(do_export(group_name))
         return send_file(file_path, as_attachment=True)
-
     except Exception as e:
-        # 打印错误到 Render Logs
         traceback.print_exc()
         return f"❌ 出错了: {str(e)}", 500
-        
+
+async def do_export(group_name):
+    await client.connect()
+    if not await client.is_user_authorized():
+        raise Exception("账号未登录，请先登录 Telegram")
+
+    dialogs = await client.get_dialogs()
+
+    # 查找群
+    target_group = None
+    for dialog in dialogs:
+        if dialog.is_group and (
+            group_name.lower() in dialog.name.lower()
+            or str(dialog.id) == group_name
+        ):
+            target_group = dialog
+            break
+
+    if not target_group:
+        raise Exception(f"❌ 未找到该群: {group_name}")
+
+    # 获取成员
+    members = await client.get_participants(target_group)
+
+    # 保存到 CSV
+    file_path = "members.csv"
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["User ID", "Username", "First Name", "Last Name"])
+        for member in members:
+            writer.writerow([
+                member.id,
+                member.username or "",
+                member.first_name or "",
+                member.last_name or ""
+            ])
+
+    return file_path
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    client.connect()
+    asyncio.run(client.connect())
     app.run(host="0.0.0.0", port=port)
