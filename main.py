@@ -1,98 +1,68 @@
-from flask import Flask, request, jsonify, send_file
-from telethon import TelegramClient
 import os
-import csv
 import asyncio
-import traceback
+from flask import Flask, request, render_template_string, redirect, url_for
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 
-api_id = 25383117
-api_hash = "c12894dabde9aa99cbe181e7ee8ec5b8"
-phone = "+639999005166"
-group_link = "https://t.me/oficial9fbetbr"
+# ===== 配置信息 =====
+API_ID = int(os.getenv("API_ID", "25383117"))
+API_HASH = os.getenv("API_HASH", "c12894dabde9aa99cbe181e7ee8ec5b8")
+SESSION_NAME = "tg_session"
 
 app = Flask(__name__)
-client = TelegramClient("session_name", api_id, api_hash)
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-@app.errorhandler(Exception)
-def handle_exception(e):
-    error_details = traceback.format_exc()
-    print("❌ 发生错误：\n", error_details)
-    return f"<h3>服务器错误：</h3><pre>{error_details}</pre>", 500
+# 全局变量保存当前手机号
+phone_number = None
 
-@app.route("/")
+# 登录页面模板
+login_page = """
+<h2>Telegram 登录</h2>
+<form method="POST">
+    <label>手机号（带+区号）：</label><br>
+    <input type="text" name="phone" required><br><br>
+    <input type="submit" value="获取验证码">
+</form>
+"""
+
+# 验证码页面模板
+code_page = """
+<h2>输入验证码</h2>
+<form method="POST">
+    <label>验证码：</label><br>
+    <input type="text" name="code" required><br><br>
+    <input type="submit" value="登录">
+</form>
+"""
+
+@app.route("/", methods=["GET"])
 def home():
-    return "✅ Telegram Exporter Running"
+    return redirect(url_for("login"))
 
-@app.route("/login")
-def login():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def do_login():
+@app.route("/login", methods=["GET", "POST"])
+async def login():
+    global phone_number
+    if request.method == "POST":
+        phone_number = request.form["phone"]
         await client.connect()
         if not await client.is_user_authorized():
-            await client.send_code_request(phone)
-            return "验证码已发送到 Telegram"
-        return "已登录，无需再次获取验证码"
+            await client.send_code_request(phone_number)
+        return render_template_string(code_page)
+    return render_template_string(login_page)
 
-    return loop.run_until_complete(do_login())
-
-@app.route("/verify")
-def verify():
-    code = request.args.get("code")
-    if not code:
-        return "请在 URL 中加上验证码参数，例如 /verify?code=12345"
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def do_verify():
-        await client.connect()
-        try:
-            await client.sign_in(phone, code)
-            return "✅ 登录成功！现在可以访问 /export 导出成员"
-        except Exception as e:
-            return f"❌ 登录失败: {e}"
-
-    return loop.run_until_complete(do_verify())
-
-@app.route("/export")
-def export():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def do_export():
-        await client.connect()
-        if not await client.is_user_authorized():
-            return "❌ 请先 /login 并 /verify 完成登录"
-
-        group = await client.get_entity(group_link)
-        members = await client.get_participants(group)
-
-        file_path = "/tmp/members.csv"
-        with open(file_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["用户名", "ID", "电话"])
-            for m in members:
-                username = m.username or ""
-                user_id = m.id
-                phone_number = getattr(m, "phone", "")
-                writer.writerow([username, user_id, phone_number])
-
-        return jsonify({
-            "status": "✅ 成功导出",
-            "count": len(members),
-            "download": "/download"
-        })
-
-    return loop.run_until_complete(do_export())
-
-@app.route("/download")
-def download():
-    file_path = "/tmp/members.csv"
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return "没有找到导出文件"
+@app.route("/verify", methods=["POST"])
+async def verify():
+    code = request.form["code"]
+    await client.connect()
+    try:
+        await client.sign_in(phone_number, code)
+    except SessionPasswordNeededError:
+        return "需要两步验证密码（暂未实现）"
+    return "✅ 登录成功！你现在可以获取群成员信息了。"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    # Render 需要监听 0.0.0.0:10000 端口
+    port = int(os.environ.get("PORT", 10000))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(client.connect())
+    app.run(host="0.0.0.0", port=port)
