@@ -72,37 +72,52 @@ def verify():
 
 @app.route("/export", methods=["POST"])
 def export_members():
-    group_name = request.form["group"]
-    client.connect()
-    dialogs = client.get_dialogs()
+    try:
+        group_name = request.form.get("group", "").strip()
+        if not group_name:
+            return "❌ 缺少 group 参数", 400
 
-    # 查找群
-    target_group = None
-    for dialog in dialogs:
-        if dialog.is_group and (group_name.lower() in dialog.name.lower() or str(dialog.id) == group_name):
-            target_group = dialog
-            break
+        # 确保 Telethon 已连接
+        if not client.is_connected():
+            client.connect()
 
-    if not target_group:
-        return "❌ 未找到该群"
+        dialogs = client.get_dialogs()
 
-    members = client.get_participants(target_group)
+        # 查找群
+        target_group = None
+        for dialog in dialogs:
+            if dialog.is_group and (group_name.lower() in dialog.name.lower() or str(dialog.id) == group_name):
+                target_group = dialog
+                break
 
-    # 保存到 CSV
-    file_path = "members.csv"
-    with open(file_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["User ID", "Username", "First Name", "Last Name"])
-        for member in members:
-            writer.writerow([
-                member.id,
-                member.username or "",
-                member.first_name or "",
-                member.last_name or ""
-            ])
+        if not target_group:
+            return f"❌ 未找到该群: {group_name}", 404
 
-    return send_file(file_path, as_attachment=True)
+        # 获取成员（Telethon get_participants 是异步）
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        members = loop.run_until_complete(client.get_participants(target_group))
 
+        # 保存到 CSV
+        file_path = "members.csv"
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["User ID", "Username", "First Name", "Last Name"])
+            for member in members:
+                writer.writerow([
+                    member.id,
+                    member.username or "",
+                    member.first_name or "",
+                    member.last_name or ""
+                ])
+
+        return send_file(file_path, as_attachment=True)
+
+    except Exception as e:
+        # 打印错误到 Render Logs
+        traceback.print_exc()
+        return f"❌ 出错了: {str(e)}", 500
+        
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     client.connect()
