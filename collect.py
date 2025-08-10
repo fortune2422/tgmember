@@ -1,65 +1,48 @@
-from telethon import TelegramClient, events
-import pandas as pd
 import os
+import asyncio
+from telethon import TelegramClient
+from telethon.errors.rpcerrorlist import ChatAdminRequiredError, ChannelPrivateError
 
-api_id = int(os.getenv("API_ID"))
-api_hash = os.getenv("API_HASH")
-session_name = 'collector_session'
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
 
-# 数据文件
-DATA_FILE = 'users.csv'
-GROUPS_FILE = 'groups.txt'
+# 从文件读取群链接
+with open("groups.txt", "r", encoding="utf-8") as f:
+    GROUPS = [line.strip() for line in f if line.strip()]
 
-# 加载已有数据
-if os.path.exists(DATA_FILE):
-    df = pd.read_csv(DATA_FILE)
-else:
-    df = pd.DataFrame(columns=['user_id', 'username', 'group_id', 'last_seen'])
+# 保存 session 到文件，避免重启后需要重新登录
+SESSION_FILE = "collector_session"
 
-# 保存数据
-def save_data():
-    df.to_csv(DATA_FILE, index=False)
-    print(f"[保存] 当前已采集 {len(df)} 位用户")
+client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
 
-# 创建客户端
-client = TelegramClient(session_name, api_id, api_hash)
+async def collect_members():
+    await client.start()
+    print("✅ 已登录 Telegram API")
 
-# 监听消息
-@client.on(events.NewMessage)
-async def handler(event):
-    global df
-    sender = await event.get_sender()
-    if sender and sender.id:
-        user_id = sender.id
-        username = sender.username or ''
-        group_id = event.chat_id
-        last_seen = pd.Timestamp.now()
-
-        # 更新或新增
-        if user_id in df['user_id'].values:
-            df.loc[df['user_id'] == user_id, ['username', 'group_id', 'last_seen']] = [username, group_id, last_seen]
-        else:
-            df = pd.concat([df, pd.DataFrame([[user_id, username, group_id, last_seen]],
-                                             columns=df.columns)], ignore_index=True)
-        save_data()
-
-async def main():
-    # 读取群链接
-    with open(GROUPS_FILE, 'r', encoding='utf-8') as f:
-        groups = [line.strip() for line in f if line.strip()]
-
-    print(f"[启动] 共 {len(groups)} 个群等待加入并监听...")
-
-    for group in groups:
+    for group_link in GROUPS:
         try:
-            await client(JoinChannelRequest(group))
-            print(f"[加入] {group}")
+            chat = await client.get_entity(group_link)
+            print(f"\n📌 正在采集群: {group_link}")
+            members = await client.get_participants(chat)
+            print(f"👥 共采集到 {len(members)} 个成员")
+
+            # 保存到 CSV
+            filename = f"{chat.title}_members.csv".replace(" ", "_")
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("user_id,username,first_name,last_name\n")
+                for m in members:
+                    f.write(f"{m.id},{m.username or ''},{m.first_name or ''},{m.last_name or ''}\n")
+            print(f"💾 已保存到 {filename}")
+
+        except ChatAdminRequiredError:
+            print(f"❌ 没有权限查看 {group_link} 成员列表")
+        except ChannelPrivateError:
+            print(f"❌ 无法访问私有群 {group_link}")
         except Exception as e:
-            print(f"[错误] 无法加入 {group}: {e}")
+            print(f"⚠️ 采集 {group_link} 出错: {e}")
 
-    print("[运行中] 正在监听群消息...")
+    await client.disconnect()
+    print("\n✅ 所有群采集完成")
 
-# 启动
-with client:
-    client.loop.run_until_complete(main())
-    client.run_until_disconnected()
+if __name__ == "__main__":
+    asyncio.run(collect_members())
