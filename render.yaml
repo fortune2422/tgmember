@@ -1,7 +1,8 @@
 services:
-  - type: web
-    name: telegram-exporter
+  - type: worker
+    name: telegram-collector
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python collect.py"
+    autoDeploy: true
