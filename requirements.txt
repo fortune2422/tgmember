@@ -1,2 +1,1 @@
-telethon
-pandas
+telethon==1.30.0
