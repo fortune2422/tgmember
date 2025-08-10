@@ -2,9 +2,8 @@ from telethon import TelegramClient, events
 import pandas as pd
 import os
 
-# 你的 Telegram API 信息（在 https://my.telegram.org 获取）
-api_id = 25383117     # 替换成你的 API ID
-api_hash = 'c12894dabde9aa99cbe181e7ee8ec5b8'  # 替换成你的 API Hash
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
 session_name = 'collector_session'
 
 # 数据文件
