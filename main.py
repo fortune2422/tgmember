@@ -1,5 +1,7 @@
 import os
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, time
 from telethon import TelegramClient
 from telethon.tl.functions.contacts import ImportContactsRequest
@@ -17,19 +19,34 @@ pulled_users_file = "pulled_users.txt"
 
 client = TelegramClient('session', api_id, api_hash)
 
-# 读取已拉过的用户
+# ================= HTTP 保活服务器 =================
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Service is running.")
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("", port), SimpleHandler)
+    server.serve_forever()
+
+# 在单独线程运行 HTTP 服务
+threading.Thread(target=run_server, daemon=True).start()
+
+# ================= 辅助函数 =================
 def load_pulled_users():
     if os.path.exists(pulled_users_file):
         with open(pulled_users_file, "r") as f:
             return set(line.strip() for line in f)
     return set()
 
-# 保存新拉过的用户
 def save_pulled_users(users):
     with open(pulled_users_file, "a") as f:
         for u in users:
             f.write(u + "\n")
 
+# ================= 拉人逻辑 =================
 async def pull_members():
     pulled_users = load_pulled_users()
     print(f"[{datetime.now()}] 开始拉人任务...")
@@ -82,16 +99,18 @@ async def pull_members():
     except Exception as e:
         print(f"任务执行出错: {e}")
 
+# ================= 调度器 =================
 async def scheduler():
     while True:
         now = datetime.now().time()
-        target_time = time(1, 0)  # 凌晨 1 点
+        target_time = time(1, 0)  # 每天凌晨 1 点
         if now.hour == target_time.hour and now.minute == target_time.minute:
             await pull_members()
             await asyncio.sleep(60)  # 防止重复执行
-        await asyncio.sleep(10)  # 心跳，防止 Render 休眠
+        await asyncio.sleep(10)
         print(f"[{datetime.now()}] 心跳中...")
 
+# ================= 主入口 =================
 async def main():
     await client.start(phone=phone)
     print("已登录 Telegram")
