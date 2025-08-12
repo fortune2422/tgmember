@@ -102,13 +102,9 @@ async def pull_members():
 # ================= 调度器 =================
 async def scheduler():
     while True:
-        now = datetime.now().time()
-        target_time = time(1, 0)  # 每天凌晨 1 点
-        if now.hour == target_time.hour and now.minute == target_time.minute:
-            await pull_members()
-            await asyncio.sleep(60)  # 防止重复执行
-        await asyncio.sleep(10)
-        print(f"[{datetime.now()}] 心跳中...")
+        await pull_members()  # 直接执行一次
+        await asyncio.sleep(30)  # 每小时跑一次
+
 
 # ================= 主入口 =================
 async def main():
